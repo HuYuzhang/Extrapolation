@@ -15,11 +15,11 @@ import sys
 import IPython
 import cv2
 from torch.nn.functional import grid_sample
-
+import IPython
 
 class Opter():
-    def __init__(self):
-        torch.cuda.set_device(0)
+    def __init__(self, gpu=0):
+        torch.cuda.set_device(gpu)
         self.Backward_tensorGrid = {}
         def Backward(tensorInput, tensorFlow):
             if str(tensorFlow.size()) not in self.Backward_tensorGrid:
@@ -77,8 +77,10 @@ class Opter():
                 self.modulePreprocess = Preprocess()
 
                 self.moduleBasic = torch.nn.ModuleList([ Basic(intLevel) for intLevel in range(6) ])
-
-                self.load_state_dict(torch.load('./network-' + arguments_strModel + '.pytorch'))
+                try:
+                    self.load_state_dict(torch.load('network-sintel-final.pytorch'))
+                except Exception:
+                    self.load_state_dict(torch.load('D:\\hyz\\19Summer\\ISCAS\\Extrapolation\\utils\\network-sintel-final.pytorch'))
             # end
 
             def forward(self, tensorFirst, tensorSecond):
@@ -108,20 +110,26 @@ class Opter():
                 return tensorFlow
             # end
         # end
-        self.FpyNet = Network().cuda.eval()
+        self.FpyNet = Network().cuda().eval()
     
     def estimate(self, tensorFirst, tensorSecond):
-        assert(tensorFirst.size(1) == tensorSecond.size(1))
-        assert(tensorFirst.size(2) == tensorSecond.size(2))
-
-        intWidth = tensorFirst.size(2)
-        intHeight = tensorFirst.size(1)
-
+        '''
+        The input can be Tensor of size: [bcz, c, h, w] or [c, h, w], and I will transfer them to .cuda()
+        '''
+        tensorFirst = tensorFirst.cuda()
+        tensorSecond = tensorSecond.cuda()
+        if len(tensorFirst.size()) == 3:
+            tensorFirst = tensorFirst.unsqueeze(0)
+            tensorSecond = tensorSecond.unsqueeze(0)
+        
+        intWidth = tensorFirst.size(3)
+        intHeight = tensorFirst.size(2)
+        batch_size = tensorFirst.size(0)
         # assert(intWidth == 1024) # remember that there is no guarantee for correctness, comment this line out if you acknowledge this and want to continue
         # assert(intHeight == 416) # remember that there is no guarantee for correctness, comment this line out if you acknowledge this and want to continue
 
-        tensorPreprocessedFirst = tensorFirst.cuda().view(1, 3, intHeight, intWidth)
-        tensorPreprocessedSecond = tensorSecond.cuda().view(1, 3, intHeight, intWidth)
+        tensorPreprocessedFirst = tensorFirst.view(batch_size, 3, intHeight, intWidth)
+        tensorPreprocessedSecond = tensorSecond.view(batch_size, 3, intHeight, intWidth)
 
         intPreprocessedWidth = int(math.floor(math.ceil(intWidth / 32.0) * 32.0))
         intPreprocessedHeight = int(math.floor(math.ceil(intHeight / 32.0) * 32.0))
@@ -134,8 +142,27 @@ class Opter():
         tensorFlow[:, 0, :, :] *= float(intWidth) / float(intPreprocessedWidth)
         tensorFlow[:, 1, :, :] *= float(intHeight) / float(intPreprocessedHeight)
 
-        return tensorFlow[0, :, :, :]
+        return tensorFlow
 
-    def warp(self, flow, tensor):
-        return Backward(tensor, flow)
+    def warp(self, tensorInput, tensorFlow):
+        '''
+        The input can be Tensor of size: [bcz, c, h, w] or [c, h, w], and I will transfer them to .cuda()
+        '''
+        tensorInput = tensorInput.cuda()
+        tensorFlow = tensorFlow.cuda()
+        if len(tensorInput.size()) == 3:
+            tensorInput = tensorInput.unsqueeze(0)
+            tensorFlow = tensorFlow.unsqueeze(0)
+
+        if str(tensorFlow.size()) not in self.Backward_tensorGrid:
+            tensorHorizontal = torch.linspace(-1.0, 1.0, tensorFlow.size(3)).view(1, 1, 1, tensorFlow.size(3)).expand(tensorFlow.size(0), -1, tensorFlow.size(2), -1)
+            tensorVertical = torch.linspace(-1.0, 1.0, tensorFlow.size(2)).view(1, 1, tensorFlow.size(2), 1).expand(tensorFlow.size(0), -1, -1, tensorFlow.size(3))
+
+            self.Backward_tensorGrid[str(tensorFlow.size())] = torch.cat([ tensorHorizontal, tensorVertical ], 1).cuda()
+        # end
+
+        tensorFlow = torch.cat([ tensorFlow[:, 0:1, :, :] / ((tensorInput.size(3) - 1.0) / 2.0), tensorFlow[:, 1:2, :, :] / ((tensorInput.size(2) - 1.0) / 2.0) ], 1)
+
+        return torch.nn.functional.grid_sample(input=tensorInput, grid=(self.Backward_tensorGrid[str(tensorFlow.size())] + tensorFlow).permute(0, 2, 3, 1), mode='bilinear', padding_mode='border')
+        # end
 
