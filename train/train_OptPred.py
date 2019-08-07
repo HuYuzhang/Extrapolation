@@ -151,8 +151,11 @@ class Opter():
 
         tensorFlow = torch.nn.functional.interpolate(input=self.FpyNet(tensorPreprocessedFirst, tensorPreprocessedSecond), size=(intHeight, intWidth), mode='bilinear', align_corners=False)
 
-        tensorFlow[:, 0, :, :] *= float(intWidth) / float(intPreprocessedWidth)
-        tensorFlow[:, 1, :, :] *= float(intHeight) / float(intPreprocessedHeight)
+        tensorFlow[:, 0, :, :] *= 1.0 / float(intPreprocessedWidth)
+        tensorFlow[:, 1, :, :] *= 1.0 / float(intPreprocessedHeight)
+
+        # tensorFlow[:, 0, :, :] *= float(intWidth) / float(intPreprocessedWidth)
+        # tensorFlow[:, 1, :, :] *= float(intHeight) / float(intPreprocessedHeight)
 
         return tensorFlow
 
@@ -241,11 +244,11 @@ class Network(torch.nn.Module):
 
         def Basic(intInput, intOutput):
             return torch.nn.Sequential(
-                torch.nn.Conv2d(in_channels=intInput, out_channels=intOutput, kernel_size=3, stride=1, padding=1),
+                torch.nn.Conv2d(in_channels=intInput, out_channels=intOutput, kernel_size=5, stride=1, padding=2),
                 torch.nn.ReLU(inplace=False),
-                torch.nn.Conv2d(in_channels=intOutput, out_channels=intOutput, kernel_size=3, stride=1, padding=1),
+                torch.nn.Conv2d(in_channels=intOutput, out_channels=intOutput, kernel_size=5, stride=1, padding=2),
                 torch.nn.ReLU(inplace=False),
-                torch.nn.Conv2d(in_channels=intOutput, out_channels=intOutput, kernel_size=3, stride=1, padding=1),
+                torch.nn.Conv2d(in_channels=intOutput, out_channels=intOutput, kernel_size=5, stride=1, padding=2),
                 torch.nn.ReLU(inplace=False)
             )
         # end
@@ -263,7 +266,7 @@ class Network(torch.nn.Module):
             )
         # end
 
-        self.moduleConv1 = Basic(8, 32)
+        self.moduleConv1 = Basic(6, 32)
         self.modulePool1 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
 
         self.moduleConv2 = Basic(32, 64)
@@ -281,14 +284,14 @@ class Network(torch.nn.Module):
         self.moduleDeconv5 = Basic(512, 512)
         self.moduleUpsample5 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-            torch.nn.Conv2d(in_channels=512, out_channels=512, kernel_size=3, stride=1, padding=1),
+            torch.nn.Conv2d(in_channels=512, out_channels=512, kernel_size=5, stride=1, padding=2),
             torch.nn.ReLU(inplace=False)
         )
 
         self.moduleDeconv4 = Basic(512, 256)
         self.moduleUpsample4 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-            torch.nn.Conv2d(in_channels=256, out_channels=256, kernel_size=3, stride=1, padding=1),
+            torch.nn.Conv2d(in_channels=256, out_channels=256, kernel_size=5, stride=1, padding=2),
             torch.nn.ReLU(inplace=False)
         )
 
@@ -297,7 +300,7 @@ class Network(torch.nn.Module):
         self.moduleDeconv3 = Basic(256, 128)
         self.moduleUpsample3 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-            torch.nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=1, padding=1),
+            torch.nn.Conv2d(in_channels=128, out_channels=128, kernel_size=5, stride=1, padding=2),
             torch.nn.ReLU(inplace=False)
         )
 
@@ -306,23 +309,33 @@ class Network(torch.nn.Module):
         self.moduleDeconv2 = Basic(128, 64)
         self.moduleUpsample2 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
-            torch.nn.Conv2d(in_channels=64, out_channels=64, kernel_size=3, stride=1, padding=1),
+            torch.nn.Conv2d(in_channels=64, out_channels=64, kernel_size=5, stride=1, padding=2),
             torch.nn.ReLU(inplace=False)
         )
 
-        self.moduleVertical1 = Subnet(64,51)
-        self.moduleVertical2 = Subnet(64,51)
-        self.moduleHorizontal1 = Subnet(64,51)
-        self.moduleHorizontal2 = Subnet(64,51)
+        self.modulePred = torch.nn.Sequential(
+            torch.nn.Conv2d(in_channels=64, out_channels=32, kernel_size=5, stride=1, padding=2),
+            torch.nn.ReLU(inplace=False),
+            torch.nn.Conv2d(in_channels=32, out_channels=16, kernel_size=5, stride=1, padding=2),
+            torch.nn.ReLU(inplace=False),
+            torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
+            torch.nn.Conv2d(in_channels=16, out_channels=2, kernel_size=5, stride=1, padding=2)
+        )
 
-        self.modulePad_a = torch.nn.ReplicationPad2d(
-            [int(math.floor(6)), int(math.floor(6)), int(math.floor(6)), int(math.floor(6))])
-        self.modulePad_b = torch.nn.ReplicationPad2d(
-            [int(math.floor(12)), int(math.floor(12)), int(math.floor(12)), int(math.floor(12))])
-        self.modulePad = torch.nn.ReplicationPad2d([ int(math.floor(25)), int(math.floor(25)), int(math.floor(25)), int(math.floor(25)) ])
 
-    def forward(self, tensorInput1, tensorInput2, diff):
-        tensorJoin = torch.cat([ tensorInput1, tensorInput2, diff ], 1)
+        # self.moduleVertical1 = Subnet(64,51)
+        # self.moduleVertical2 = Subnet(64,51)
+        # self.moduleHorizontal1 = Subnet(64,51)
+        # self.moduleHorizontal2 = Subnet(64,51)
+
+        # self.modulePad_a = torch.nn.ReplicationPad2d(
+        #     [int(math.floor(6)), int(math.floor(6)), int(math.floor(6)), int(math.floor(6))])
+        # self.modulePad_b = torch.nn.ReplicationPad2d(
+        #     [int(math.floor(12)), int(math.floor(12)), int(math.floor(12)), int(math.floor(12))])
+        # self.modulePad = torch.nn.ReplicationPad2d([ int(math.floor(25)), int(math.floor(25)), int(math.floor(25)), int(math.floor(25)) ])
+
+    def forward(self, tensorInput1, tensorInput2):
+        tensorJoin = torch.cat([ tensorInput1, tensorInput2 ], 1)
         tensorConv1 = self.moduleConv1(tensorJoin)
         tensorPool1 = self.modulePool1(tensorConv1)
 
@@ -360,12 +373,9 @@ class Network(torch.nn.Module):
 
         tensorCombine = tensorUpsample2 + tensorConv2
 
-        tensorDot1 = sepconv.FunctionSepconv()(self.modulePad(tensorInput1), self.moduleVertical1(tensorCombine),
-                                                self.moduleHorizontal1(tensorCombine))
-        tensorDot2 = sepconv.FunctionSepconv()(self.modulePad(tensorInput2), self.moduleVertical2(tensorCombine),
-                                               self.moduleHorizontal2(tensorCombine))
+        tensorFlow = self.modulePred(tensorCombine)
 
-        return tensorDot1 + tensorDot2
+        return tensorFlow
 
 
 
@@ -376,7 +386,7 @@ def weights_init(m):
 
 def main(lr, batch_size, epoch, gpu, train_set, valid_set):
     # ------------- Part for tensorboard --------------
-    writer = SummaryWriter(comment="_OPFN")
+    writer = SummaryWriter(comment="_Pred_opt")
     # ------------- Part for tensorboard --------------
     torch.backends.cudnn.enabled = True
     torch.cuda.set_device(gpu)
@@ -398,9 +408,9 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
     SepConvNet.apply(weights_init)
     # SepConvNet.load_state_dict(torch.load('/mnt/hdd/xiasifeng/sepconv/sepconv_mutiscale_LD/SepConv_iter33-ltype_fSATD_fs-lr_0.001-trainloss_0.1497-evalloss_0.1357-evalpsnr_29.6497.pkl'))
 
-    # MSE_cost = nn.MSELoss().cuda()
+    SepConvNet_cost = nn.MSELoss().cuda()
     # SepConvNet_cost = nn.L1Loss().cuda()
-    SepConvNet_cost = sepconv.SATDLoss().cuda()
+    # SepConvNet_cost = sepconv.SATDLoss().cuda()
     SepConvNet_optimizer = optim.Adamax(SepConvNet.parameters(),lr=LEARNING_RATE, betas=(belta1,belta2))
     SepConvNet_schedule = optim.lr_scheduler.ReduceLROnPlateau(SepConvNet_optimizer, factor=0.1, patience = 3, verbose=True, min_lr=1e-5)
 
@@ -431,19 +441,19 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
             with torch.no_grad():
                 # opt1_2 = opter.estimate(imgR, imgL)
                 opt2_3 = opter.estimate(label, imgR)
-            output = SepConvNet(imgL, imgR, opt2_3)
-            loss = SepConvNet_cost(output, label)
+            output = SepConvNet(imgL, imgR)
+            loss = SepConvNet_cost(output, opt2_3)
             loss.backward()
             SepConvNet_optimizer.step()
 
             sumloss = sumloss + loss.data.item()
             tsumloss = tsumloss + loss.data.item()
             if cnt % printinterval == 0:
-                writer.add_image("Ref image", imgR[0], cnt)
-                writer.add_image("Pred image", output[0], cnt)
-                writer.add_image("Target image", label[0], cnt)
-                writer.add_scalar('Train Batch SATD loss', loss.data.item(), int(global_step / printinterval))
-                writer.add_scalar('Train Interval SATD loss', tsumloss / printinterval, int(global_step / printinterval))
+                # writer.add_image("Ref image", imgR[0], cnt)
+                # writer.add_image("Pred image", output[0], cnt)
+                # writer.add_image("Target image", label[0], cnt)
+                # writer.add_scalar('Train Batch SATD loss', loss.data.item(), int(global_step / printinterval))
+                writer.add_scalar('Optical Interval MSE loss', tsumloss / printinterval, int(global_step / printinterval))
                 print('Epoch [%d/%d], Iter [%d/%d], Time [%4.4f], Batch loss [%.6f], Interval loss [%.6f]' %
                     (epoch + 1, EPOCH, cnt, len(trainset) // BATCH_SIZE, time.time() - start_time, loss.data.item(), tsumloss / printinterval))
                 tsumloss = 0.0
@@ -465,11 +475,11 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
                 # opt1_2 = opter.estimate(imgR, imgL)
                 opt2_3 = opter.estimate(label, imgR)
 
-                output = SepConvNet(imgL, imgR, opt2_3)
-                loss = SepConvNet_cost(output, label)
+                output = SepConvNet(imgL, imgR)
+                loss = SepConvNet_cost(output, opt2_3)
 
                 sumloss = sumloss + loss.data.item()
-                psnr = psnr + calcPSNR.calcPSNR(output.cpu().data.numpy(), label.cpu().data.numpy())
+                # psnr = psnr + calcPSNR.calcPSNR(output.cpu().data.numpy(), label.cpu().data.numpy())
                 evalcnt = evalcnt + 1
         # ------------- Tensorboard part -------------
         writer.add_scalar("Valid SATD loss", sumloss / evalcnt, epoch)
@@ -479,7 +489,7 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
         sumloss / evalcnt, psnr / valset.__len__()))
         SepConvNet_schedule.step(psnr / valset.__len__())
         torch.save(SepConvNet.state_dict(),
-                os.path.join('.', 'OPFN_iter' + str(epoch + 1)
+                os.path.join('.', 'Pred_iter' + str(epoch + 1)
                                 + '-ltype_fSATD_fs'
                                 + '-lr_' + str(LEARNING_RATE)
                                 + '-trainloss_' + str(round(trainloss, 4))

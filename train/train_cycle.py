@@ -263,7 +263,7 @@ class Network(torch.nn.Module):
             )
         # end
 
-        self.moduleConv1 = Basic(8, 32)
+        self.moduleConv1 = Basic(6, 32)
         self.modulePool1 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
 
         self.moduleConv2 = Basic(32, 64)
@@ -321,8 +321,8 @@ class Network(torch.nn.Module):
             [int(math.floor(12)), int(math.floor(12)), int(math.floor(12)), int(math.floor(12))])
         self.modulePad = torch.nn.ReplicationPad2d([ int(math.floor(25)), int(math.floor(25)), int(math.floor(25)), int(math.floor(25)) ])
 
-    def forward(self, tensorInput1, tensorInput2, diff):
-        tensorJoin = torch.cat([ tensorInput1, tensorInput2, diff ], 1)
+    def forward(self, tensorInput1, tensorInput2):
+        tensorJoin = torch.cat([ tensorInput1, tensorInput2 ], 1)
         tensorConv1 = self.moduleConv1(tensorJoin)
         tensorPool1 = self.modulePool1(tensorConv1)
 
@@ -376,7 +376,7 @@ def weights_init(m):
 
 def main(lr, batch_size, epoch, gpu, train_set, valid_set):
     # ------------- Part for tensorboard --------------
-    writer = SummaryWriter(comment="_OPFN")
+    writer = SummaryWriter(comment="_cycle")
     # ------------- Part for tensorboard --------------
     torch.backends.cudnn.enabled = True
     torch.cuda.set_device(gpu)
@@ -428,16 +428,22 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
             imgL = var(imgL).cuda()
             imgR = var(imgR).cuda()
             label = var(label).cuda()
-            with torch.no_grad():
-                # opt1_2 = opter.estimate(imgR, imgL)
-                opt2_3 = opter.estimate(label, imgR)
-            output = SepConvNet(imgL, imgR, opt2_3)
+            
+            output = SepConvNet(imgL, imgR)
             loss = SepConvNet_cost(output, label)
+            loss.backward(retain_graph=True)
+            SepConvNet_optimizer.step()
+            
+            sumloss = sumloss + loss.data.item()
+            tsumloss = tsumloss + loss.data.item()
+
+            # Then begin the cycle loss
+            SepConvNet_optimizer.zero_grad()
+            output = SepConvNet(output, imgR)
+            loss = SepConvNet_cost(output, imgL)
             loss.backward()
             SepConvNet_optimizer.step()
 
-            sumloss = sumloss + loss.data.item()
-            tsumloss = tsumloss + loss.data.item()
             if cnt % printinterval == 0:
                 writer.add_image("Ref image", imgR[0], cnt)
                 writer.add_image("Pred image", output[0], cnt)
@@ -462,10 +468,8 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
             imgR = var(imgR).cuda()
             label = var(label).cuda()
             with torch.no_grad():
-                # opt1_2 = opter.estimate(imgR, imgL)
-                opt2_3 = opter.estimate(label, imgR)
 
-                output = SepConvNet(imgL, imgR, opt2_3)
+                output = SepConvNet(imgL, imgR)
                 loss = SepConvNet_cost(output, label)
 
                 sumloss = sumloss + loss.data.item()
@@ -479,7 +483,7 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
         sumloss / evalcnt, psnr / valset.__len__()))
         SepConvNet_schedule.step(psnr / valset.__len__())
         torch.save(SepConvNet.state_dict(),
-                os.path.join('.', 'OPFN_iter' + str(epoch + 1)
+                os.path.join('.', 'cycle_iter' + str(epoch + 1)
                                 + '-ltype_fSATD_fs'
                                 + '-lr_' + str(LEARNING_RATE)
                                 + '-trainloss_' + str(round(trainloss, 4))
