@@ -179,56 +179,54 @@ class Opter():
         return torch.nn.functional.grid_sample(input=tensorInput, grid=(self.Backward_tensorGrid[str(tensorFlow.size())] + tensorFlow).permute(0, 2, 3, 1), mode='bilinear', padding_mode='border')
         # end
 class mydataset(data.Dataset):
-    def __init__(self, datasetpath, transform=None):
+    def __init__(self, datasetpath, filepath, transform=None):
         self.transform=transform
         self.readdir = datasetpath
         self.imgstrs = []
-        for filename in os.listdir(self.readdir):
-            if filename.__len__() > 6 and filename[-6:] == '_L.bmp':
-                self.imgstrs.append(filename)
+        with open(os.path.join(datasetpath, filepath), 'r') as f:
+            self.imgstrs = [l[:-1] for l in f.readlines()]
 
     def __len__(self):
         return len(self.imgstrs)
 
     def __getitem__(self, idx):
         imgstr = self.imgstrs[idx]
-        img1str = os.path.join(self.readdir, imgstr)
-        img2str = os.path.join(self.readdir, imgstr[:-6] + '_R.bmp')
+        img1str = os.path.join(self.readdir, imgstr, 'im1.png')
+        img2str = os.path.join(self.readdir, imgstr, 'im2.png')
 
-        corder = 0
-        if corder == 0 or self.transform is None:
-            img1 = np.array(pilImg.open(img1str))
-            img2 = np.array(pilImg.open(img2str))
-        else:
-            img1 = np.array(pilImg.open(img2str))
-            img2 = np.array(pilImg.open(img1str))
 
-        img3 = np.array(pilImg.open(os.path.join(self.readdir, imgstr[:-6] + '_M.bmp')))
+        img1 = np.array(pilImg.open(img2str))
+        img2 = np.array(pilImg.open(img1str))
+        img3 = np.array(pilImg.open(os.path.join(self.readdir, imgstr, 'im3.png')))
 
+        img3 = img3[:256, :256, :]
+        img1 = img1[:256, :256, :]
+        img2 = img2[:256, :256, :]
         if self.transform is not None:
             # random shift and crop
-            cropx = random.randint(2, 20)
-            cropy = random.randint(2, 20)
+            # cropx = random.randint(2, 20)
+            # cropy = random.randint(2, 20)
 
 
 
-            shift = random.randint(0, 2)
-            ifx = random.randint(0, 1)
-            shiftx = 0
-            shifty = 0
+            # shift = random.randint(0, 2)
+            # ifx = random.randint(0, 1)
+            # shiftx = 0
+            # shifty = 0
 
-            img3 = img3[cropy:cropy + 128, cropx:cropx + 128, :]
-            img1 = img1[cropy - shifty:cropy + 128 - shifty, cropx - shiftx : cropx + 128 - shiftx,:]
-            img2 = img2[cropy + shifty:cropy + 128 + shifty, cropx + shiftx : cropx + 128 + shiftx,:]
+            # img3 = img3[cropy:cropy + 128, cropx:cropx + 128, :]
+            # img1 = img1[cropy - shifty:cropy + 128 - shifty, cropx - shiftx : cropx + 128 - shiftx,:]
+            # img2 = img2[cropy + shifty:cropy + 128 + shifty, cropx + shiftx : cropx + 128 + shiftx,:]
+            
 
             flipH = random.randint(0, 1)
             flipV = random.randint(0,1)
             if flipH==1:
-                img1=np.flip(img1,0)
+                img1 = np.flip(img1, 0)
                 img2 = np.flip(img2, 0)
                 img3 = np.flip(img3, 0)
             if flipV==1:
-                img1=np.flip(img1,1)
+                img1 = np.flip(img1, 1)
                 img2 = np.flip(img2, 1)
                 img3 = np.flip(img3, 1)
 
@@ -247,10 +245,10 @@ def meshgrid(height, width):
 class Network(torch.nn.Module):
     def __init__(self):
         super(Network, self).__init__()
-        height = 128
-        width = 128
+        height = 256
+        width = 256
         batch_size = 16
-
+        
         x_t = torch.matmul(
             torch.ones(height, 1), torch.linspace(-1.0, 1.0, width).view(1, width))
         y_t = torch.matmul(
@@ -309,8 +307,6 @@ class Network(torch.nn.Module):
         input = x
         input_size = tuple(x.size()[2:4])
         batch_size = tensorInput1.size(0)
-        height = tensorInput1.size(2)
-        width = tensorInput1.size(3)
         # IPython.embed()
         # exit()
         x = self.conv1(x)
@@ -365,13 +361,10 @@ class Network(torch.nn.Module):
 
         flow = x[:, 0:2, :, :]
         mask = x[:, 2:3, :, :]
+
+
+
         flow = 0.5 * flow
-
-        
-        flow_x = flow[:,0] * (128.0 / float(width))
-        flow_y = flow[:,1] * (128.0 / float(height))
-
-        
 
         if valid:
             grid_x, grid_y = meshgrid(input_size[0], input_size[1])
@@ -379,15 +372,15 @@ class Network(torch.nn.Module):
                 grid_x.repeat([input.size()[0], 1, 1])).cuda()
             grid_y = torch.autograd.Variable(
                 grid_y.repeat([input.size()[0], 1, 1])).cuda()
-            coor_x_1 = grid_x - flow_x * 2
-            coor_y_1 = grid_y - flow_y * 2
-            coor_x_2 = grid_x - flow_x
-            coor_y_2 = grid_y - flow_y
+            coor_x_1 = grid_x - flow[:, 0, :, :] * 2
+            coor_y_1 = grid_y - flow[:, 1, :, :] * 2
+            coor_x_2 = grid_x - flow[:, 0, :, :]
+            coor_y_2 = grid_y - flow[:, 1, :, :]
         else:
-            coor_x_1 = self.grid_x[:batch_size] - flow_x * 2
-            coor_y_1 = self.grid_y[:batch_size] - flow_y * 2
-            coor_x_2 = self.grid_x[:batch_size] - flow_x
-            coor_y_2 = self.grid_y[:batch_size] - flow_y
+            coor_x_1 = self.grid_x[:batch_size] - flow[:, 0, :, :] * 2
+            coor_y_1 = self.grid_y[:batch_size] - flow[:, 1, :, :] * 2
+            coor_x_2 = self.grid_x[:batch_size] - flow[:, 0, :, :]
+            coor_y_2 = self.grid_y[:batch_size] - flow[:, 1, :, :]
 
 
         output_1 = torch.nn.functional.grid_sample(
@@ -414,7 +407,7 @@ def weights_init(m):
 
 def main(lr, batch_size, epoch, gpu, train_set, valid_set):
     # ------------- Part for tensorboard --------------
-    writer = SummaryWriter(log_dir="tb/rs_fine_voxel")
+    # writer = SummaryWriter(comment="_voxel")
     # ------------- Part for tensorboard --------------
     torch.backends.cudnn.enabled = True
     torch.cuda.set_device(gpu)
@@ -426,15 +419,15 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
     belta1 = 0.9
     belta2 = 0.999
 
-    trainset = mydataset(train_set,transform_train)
-    valset = mydataset(valid_set)
+    trainset = mydataset(train_set, 'filelist.txt', transform_train)
+    valset = mydataset(valid_set, 'test.txt')
     trainLoader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True)
     valLoader = torch.utils.data.DataLoader(valset, batch_size=1, shuffle=False)
 
 
     SepConvNet = Network().cuda()
     # SepConvNet.apply(weights_init)
-    # SepConvNet.load_state_dict(torch.load('/mnt/hdd/xiasifeng/sepconv/sepconv_mutiscale_LD/SepConv_iter33-ltype_fSATD_fs-lr_0.001-trainloss_0.1497-evalloss_0.1357-evalpsnr_29.6497.pkl'))
+    # SepConvNet.load_state_dict(torch.load('voxel_iter14-ltype_fSATD_fs-lr_0.001-trainloss_0.1332-evalloss_0.1761-evalpsnr_24.6211.pkl'))
 
     # MSE_cost = nn.MSELoss().cuda()
     # SepConvNet_cost = nn.L1Loss().cuda()
@@ -476,12 +469,11 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
             tsumloss = tsumloss + loss.data.item()
             
             if cnt % printinterval == 0:
-                writer.add_image("Ref1 image", imgL[0], cnt)
-                writer.add_image("Ref2 image", imgR[0], cnt)
-                writer.add_image("Pred image", output[0], cnt)
-                writer.add_image("Target image", label[0], cnt)
-                writer.add_scalar('Train Batch SATD loss', loss.data.item(), int(global_step / printinterval))
-                writer.add_scalar('Train Interval SATD loss', tsumloss / printinterval, int(global_step / printinterval))
+                # writer.add_image("Ref image", imgR[0], cnt)
+                # writer.add_image("Pred image", output[0], cnt)
+                # writer.add_image("Target image", label[0], cnt)
+                # writer.add_scalar('Train Batch SATD loss', loss.data.item(), int(global_step / printinterval))
+                # writer.add_scalar('Train Interval SATD loss', tsumloss / printinterval, int(global_step / printinterval))
                 print('Epoch [%d/%d], Iter [%d/%d], Time [%4.4f], Batch loss [%.6f], Interval loss [%.6f]' %
                     (epoch + 1, EPOCH, cnt, len(trainset) // BATCH_SIZE, time.time() - start_time, loss.data.item(), tsumloss / printinterval))
                 tsumloss = 0.0
@@ -508,14 +500,14 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
                 psnr = psnr + calcPSNR.calcPSNR(output.cpu().data.numpy(), label.cpu().data.numpy())
                 evalcnt = evalcnt + 1
         # ------------- Tensorboard part -------------
-        writer.add_scalar("Valid SATD loss", sumloss / evalcnt, epoch)
-        writer.add_scalar("Valid PSNR", psnr / valset.__len__(), epoch)
+        # writer.add_scalar("Valid SATD loss", sumloss / evalcnt, epoch)
+        # writer.add_scalar("Valid PSNR", psnr / valset.__len__(), epoch)
         # ------------- Tensorboard part -------------
         print('Validation loss [%.6f],  Average PSNR [%.4f]' % (
         sumloss / evalcnt, psnr / valset.__len__()))
         SepConvNet_schedule.step(psnr / valset.__len__())
         torch.save(SepConvNet.state_dict(),
-                os.path.join('.', 'rs_voxel_iter' + str(epoch + 1)
+                os.path.join('.', 'voxel_iter' + str(epoch + 1)
                                 + '-ltype_fSATD_fs'
                                 + '-lr_' + str(LEARNING_RATE)
                                 + '-trainloss_' + str(round(trainloss, 4))
@@ -533,9 +525,9 @@ if __name__ == "__main__":
                         default=200, help="Number of epochs")
     parser.add_argument("--gpu", type=int, dest="gpu", required=True,
                         help="GPU device id")
-    parser.add_argument("--train_set", type=str, dest="train_set", default="/mnt/ssd/iku/vimeoimgs_LD_crop", 
+    parser.add_argument("--train_set", type=str, dest="train_set", default="/data1/ikusyou/vimeo_septuplet/sequences", 
                         help="Path of the training set")
-    parser.add_argument("--valid_set", type=str, dest="valid_set", default="/mnt/hdd/iku/vimeoimgs_LD_val_crop", 
+    parser.add_argument("--valid_set", type=str, dest="valid_set", default="/data1/ikusyou/vimeo_septuplet/sequences", 
                         help="Path of the validation set")
 
     args = parser.parse_args()
