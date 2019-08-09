@@ -31,6 +31,46 @@ transform_train = transforms.Compose([
     transforms.RandomHorizontalFlip(),
     transforms.RandomVerticalFlip(),
 ])
+
+class vimeodataset(data.Dataset):
+    def __init__(self, datasetpath, filelist, transform=None):
+        self.transform=transform
+        self.readdir = datasetpath
+        self.imgstrs = []
+        with open(os.path.join(datasetpath, filelist), 'r')  as f:
+            self.imgstrs = [l[:-1] for l in f.readlines()]
+
+    def __len__(self):
+        return len(self.imgstrs)
+
+    def __getitem__(self, idx):
+        imgstr = self.imgstrs[idx]
+        
+        imgs = []
+        for i in range(7):
+            fname = os.path.join(self.readdir, imgstr, 'im%d.png'%(i + 1))
+            imgs.append(np.array(pilImg.open(fname)))
+        
+        if self.transform is not None:
+            # random shift and crop
+            cropx = random.randint(2, 100)
+            cropy = random.randint(2, 100)
+
+            for i in range(7):
+                imgs[i] = imgs[i][cropy:cropy + 128, cropx:cropx + 128, :]
+
+            flipH = random.randint(0, 1)
+            flipV = random.randint(0,1)
+            if flipH==1:
+                for i in range(7):
+                    imgs[i] = np.flip(imgs[i],0)
+
+            if flipV==1:
+                for i in range(7):
+                    imgs[i] = np.flip(imgs[i],1)
+        return [var(torch.from_numpy(tmpimg.transpose(2,0,1).astype(np.float32) / 255.0)) for tmpimg in imgs]
+
+
 class mydataset(data.Dataset):
     def __init__(self, datasetpath, transform=None):
         self.transform=transform
@@ -89,6 +129,135 @@ class mydataset(data.Dataset):
                var(torch.from_numpy(img3.transpose(2,0,1).astype(np.float32) / 255.0))
 
 
+class ConvLSTMCell(nn.Module):
+
+    def __init__(self, input_size, input_dim, hidden_dim, kernel_size, bias=True):
+        """
+        Initialize ConvLSTM cell.
+        
+        Parameters
+        ----------
+        input_size: (int, int)
+            Height and width of input tensor as (height, width).
+        input_dim: int
+            Number of channels of input tensor.
+        hidden_dim: int
+            Number of channels of hidden state.
+        kernel_size: (int, int)
+            Size of the convolutional kernel.
+        bias: bool
+            Whether or not to add the bias.
+        
+        By HuYuzhang: Note that I don't change anything for the definition of this class: ConvLSTMCell
+        """
+
+        super(ConvLSTMCell, self).__init__()
+
+        self.height, self.width = input_size
+        self.input_dim  = input_dim
+        self.hidden_dim = hidden_dim
+
+        self.kernel_size = kernel_size
+        self.padding     = kernel_size[0] // 2, kernel_size[1] // 2
+        self.bias        = bias
+        
+        self.conv = nn.Conv2d(in_channels=self.input_dim + self.hidden_dim,
+                                out_channels=4 * self.hidden_dim,
+                                kernel_size=self.kernel_size,
+                                padding=self.padding,
+                                bias=self.bias)
+
+    def forward(self, input_tensor, cur_state):
+        '''
+        input_tensor：Normal data, like image etc
+        cur_state: a tuple consist of (tensorH, tensorC)
+        Note by Hu Yuzhang
+        '''
+        h_cur, c_cur = cur_state
+        
+        combined = torch.cat([input_tensor, h_cur], dim=1)  # concatenate along channel axis
+        
+        combined_conv = self.conv(combined)
+        cc_i, cc_f, cc_o, cc_g = torch.split(combined_conv, self.hidden_dim, dim=1) 
+        i = torch.sigmoid(cc_i)
+        f = torch.sigmoid(cc_f)
+        o = torch.sigmoid(cc_o)
+        g = torch.tanh(cc_g)
+
+        c_next = f * c_cur + i * g
+        h_next = o * torch.tanh(c_next)
+        
+        return h_next, c_next
+
+    def init_hidden(self, batch_size):
+        return (Variable(torch.zeros(batch_size, self.hidden_dim, self.height, self.width)).cuda(),
+                Variable(torch.zeros(batch_size, self.hidden_dim, self.height, self.width)).cuda())
+
+
+class ConvLSTM(nn.Module):
+    '''
+    By HuYuzhang: 
+    Here I do a lot change...
+    Now this class no more support multi-layer cell and multi-time-step input...
+    Sounds like it becomes worse, but this change can benefit my work with warping or separate convolution etc
+
+    Params:
+
+    (tuple)input_size=(height, width)
+    (int)input_dim=input_channels
+    (int)hidden_dim=hidden_channels(Note the for the original version, this is a list for the support of the multi-layer)
+    (tuple)kernel_size = (k_w, k_h)
+
+
+    ! The removed params compared to the original version:
+
+    num_layers=3, I don't need multi-layer, just like the change on the param: hidden_dim
+    batch_first=3, I promise that all my input is of shape [bzs, c, h, w], and without time step, I will iter by myself
+    bias=True, No doubt that I will use the bias...
+    return_all_layers=False, Now that I only have one input, there is no conception of time... only one val will be returned
+    '''         
+
+    def __init__(self, input_size=(128,128), input_dim=3, hidden_dim=32, kernel_size=(3,3)):
+        super(ConvLSTM, self).__init__()
+
+        self.height, self.width = input_size
+
+        self.input_dim  = input_dim
+        self.hidden_dim = hidden_dim
+        self.kernel_size = kernel_size
+
+        self.cell = ConvLSTMCell(input_size=(self.height, self.width),
+                                    input_dim=self.input_dim,
+                                    hidden_dim=self.hidden_dim,
+                                    kernel_size=self.kernel_size)
+
+
+    def forward(self, input_tensor, hidden_state=None):
+        """
+        
+        Parameters
+        ----------
+        input_tensor:  
+            4-D Tensor of shape (bcz, c, h, w)
+        hidden_state: todo
+            4-D Tensor of shape (bcz, hidden_dim, h, w) (For I use the default stride of 1)
+            
+        Returns
+        -------
+        layer_output, last_state
+        """
+
+        # Implement stateful ConvLSTM
+        if hidden_state is not None:
+            # This means that what we use as the state is from the last state
+        else:
+            hidden_state = self.cell.init_hidden(batch_size=input_tensor.size(0))
+
+
+        h, c = self.cell(input_tensor=input_tensor, cur_state=hidden_state)
+        # Note that h and c is the return value, where h is the output of LSTM and c is the new status of the cell
+        return h, c
+
 
 class Network(torch.nn.Module):
     def __init__(self):
@@ -118,10 +287,9 @@ class Network(torch.nn.Module):
             )
         # end
 
-
-        # ----------------- Part for adaptiva-kernel E-D --------------------------
-            # ------------------- Encoder Part -----------------
-        self.moduleConv1 = Basic(6, 32)
+    
+    # ------------------- Encoder Part -----------------
+        self.moduleConv1 = Basic(38, 32) #
         self.modulePool1 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
 
         self.moduleConv2 = Basic(32, 64)
@@ -135,7 +303,8 @@ class Network(torch.nn.Module):
 
         self.moduleConv5 = Basic(256, 512)
         self.modulePool5 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-            # ------------------- Decoder Part -----------------
+    
+    # ------------------- Decoder Part -----------------
         self.moduleDeconv5 = Basic(512, 512)
         self.moduleUpsample5 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
@@ -157,8 +326,6 @@ class Network(torch.nn.Module):
             torch.nn.ReLU(inplace=False)
         )
 
-
-
         self.moduleDeconv2 = Basic(128, 64)
         self.moduleUpsample2 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
@@ -177,22 +344,32 @@ class Network(torch.nn.Module):
             [int(math.floor(12)), int(math.floor(12)), int(math.floor(12)), int(math.floor(12))])
         self.modulePad = torch.nn.ReplicationPad2d([ int(math.floor(25)), int(math.floor(25)), int(math.floor(25)), int(math.floor(25)) ])
 
+    # ------------------- LSTM Part -----------------
+        self.moduleLSTM = ConvLSTM()
 
-        # ----------------- Part for optical flow prediction ------------------------
+    # ------------------- Initialize Part -----------------
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.weight.data.normal_(0, 0.01)
                 if m.bias is not None:
                     m.bias.data.zero_()
 
-    def forward(self, tensorInput1, tensorInput2):
+    def forward(self, tensorInput1, tensorInput2, tensorResidual=None, tensorHidden=None):
         '''
         tensorInput1/2 : [bcz, 3, height, width]
-        diff:            [bcz, 2, height, width]
+        tensorResidual:  [bcz, 3, height, width]
+        tensorHidden:(tuple or None) ([bcz, hidden_dim, height, width])
+        When the LSTM_state is Noe, it means that its the first time step
         '''
+    # ------------------- LSTM Part --------------------
+        if tensorResidual is None:
+            tensorResidual = Variable(torch.zeros(batch_size, tensorInput1.size(1), tensorInput1.size(2), tensorInput1.size(3))).cuda()
+            tensorH_next, tensorC_next = self.moduleLSTM(tensorResidual) # Hence we also don't have the tensorHidden
+        else:
+            tensorH_next, tensorC_next = self.moduleLSTM(tensorResidual, tensorHidden)
         
-
-        tensorJoin = torch.cat([ tensorInput1, tensorInput2 ], 1)
+    # ------------------- Encoder Part -----------------
+        tensorJoin = torch.cat([ tensorInput1, tensorInput2, tensorh_next ], 1)
 
         tensorConv1 = self.moduleConv1(tensorJoin)#[32, 128, 128]
         tensorPool1 = self.modulePool1(tensorConv1)
@@ -209,8 +386,7 @@ class Network(torch.nn.Module):
         tensorConv5 = self.moduleConv5(tensorPool4)#[512, 8, 8]
         tensorPool5 = self.modulePool5(tensorConv5)
 
-        
-
+    # ------------------- Doceder Part -----------------
         tensorDeconv5 = self.moduleDeconv5(tensorPool5)#[512, 4, 4]
         tensorUpsample5 = self.moduleUpsample5(tensorDeconv5)#[512, 8, 8]
 
@@ -234,20 +410,15 @@ class Network(torch.nn.Module):
         tensorDot1 = sepconv.FunctionSepconv()(self.modulePad(tensorInput1), self.moduleVertical1(tensorCombine),
                                                 self.moduleHorizontal1(tensorCombine))
         tensorDot2 = sepconv.FunctionSepconv()(self.modulePad(tensorInput2), self.moduleVertical2(tensorCombine),
-                                               self.moduleHorizontal2(tensorCombine))
+                                                self.moduleHorizontal2(tensorCombine))
         
-        return tensorDot1 + tensorDot2
-
-
-
-def weights_init(m):
-    if isinstance(m, nn.Conv2d):
-        init.xavier_normal_(m.weight.data)
-        init.constant_(m.bias.data,0.0)
+        
+    # Return the predictd tensor and the next state of convLSTM
+        return tensorDot1 + tensorDot2, (tensorH_next, tensorC_next)
 
 def main(lr, batch_size, epoch, gpu, train_set, valid_set):
     # ------------- Part for tensorboard --------------
-    writer = SummaryWriter(log_dir='tb/baseline_finetune')
+    # writer = SummaryWriter(log_dir='tb/LSTM_finetune')
     # ------------- Part for tensorboard --------------
     torch.backends.cudnn.enabled = True
     torch.cuda.set_device(gpu)
@@ -259,15 +430,15 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
     belta1 = 0.9
     belta2 = 0.999
 
-    trainset = mydataset(train_set,transform_train)
-    valset = mydataset(valid_set)
+    trainset = vimeodataset(train_set,transform_train)
+    valset = vimeodataset(valid_set)
     trainLoader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True)
     valLoader = torch.utils.data.DataLoader(valset, batch_size=1, shuffle=False)
 
 
     SepConvNet = Network().cuda()
     # SepConvNet.apply(weights_init)
-    SepConvNet.load_state_dict(torch.load('cycle_iter29-ltype_fSATD_fs-lr_0.001-trainloss_0.1338-evalloss_0.124-evalpsnr_29.2675.pkl'))
+    # SepConvNet.load_state_dict(torch.load('cycle_iter29-ltype_fSATD_fs-lr_0.001-trainloss_0.1338-evalloss_0.124-evalpsnr_29.2675.pkl'))
 
     # MSE_cost = nn.MSELoss().cuda()
     # SepConvNet_cost = nn.L1Loss().cuda()
@@ -292,16 +463,24 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
         tsumloss = 0.0 # The tsumloss is for the printinterval
         printinterval = 300
         print("---------------[Epoch%3d]---------------"%(epoch + 1))
-        for imgL, imgR, label in trainLoader:
+        for img_list in trainLoader:
             global_step = global_step + 1
             cnt = cnt + 1
             SepConvNet_optimizer.zero_grad()
-            imgL = var(imgL).cuda()
-            imgR = var(imgR).cuda()
-            label = var(label).cuda()
-            
-            output = SepConvNet(imgL, imgR)
-            loss = SepConvNet_cost(output, label)
+            for i in range(5):
+                loss_s = []
+                imgL = var(img_list[i]).cuda()
+                imgR = var(img_list[i+1]).cuda()
+                label = var(img_list[i+2]).cuda()
+                if i == 0:
+                    output, stat = SepConvNet(imgL, imgR)
+                    res = label - output
+                    loss_s.append(SepConvNet_cost(output, label))
+                else:
+                    output, stat = SepConvNet(imgL, imgR, res, stat)
+                    res = label - output
+                    loss_s.append(SepConvNet_cost(output, label))
+            loss = loss_s[0] + loss_s[1] + loss_s[2] + loss_s[3] + loss_s[4]
             loss.backward()
             SepConvNet_optimizer.step()
             
@@ -310,12 +489,12 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
 
 
             if cnt % printinterval == 0:
-                writer.add_image("Ref1 image", imgL[0], cnt)
-                writer.add_image("Ref2 image", imgR[0], cnt)
-                writer.add_image("Pred image", output[0], cnt)
-                writer.add_image("Target image", label[0], cnt)
-                writer.add_scalar('Train Batch SATD loss', loss.data.item(), int(global_step / printinterval))
-                writer.add_scalar('Train Interval SATD loss', tsumloss / printinterval, int(global_step / printinterval))
+                # writer.add_image("Ref1 image", imgL[0], cnt)
+                # writer.add_image("Ref2 image", imgR[0], cnt)
+                # writer.add_image("Pred image", output[0], cnt)
+                # writer.add_image("Target image", label[0], cnt)
+                # writer.add_scalar('Train Batch SATD loss', loss.data.item(), int(global_step / printinterval))
+                # writer.add_scalar('Train Interval SATD loss', tsumloss / printinterval, int(global_step / printinterval))
                 print('Epoch [%d/%d], Iter [%d/%d], Time [%4.4f], Batch loss [%.6f], Interval loss [%.6f]' %
                     (epoch + 1, EPOCH, cnt, len(trainset) // BATCH_SIZE, time.time() - start_time, loss.data.item(), tsumloss / printinterval))
                 tsumloss = 0.0
@@ -323,39 +502,39 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
             (epoch + 1, EPOCH, cnt, time.time() - start_time, sumloss / cnt))
 
         # ---------------- Part for validation ----------------
-        trainloss = sumloss / cnt
-        SepConvNet.eval().cuda()
-        evalcnt = 0
-        pos = 0.0
-        sumloss = 0.0
-        psnr = 0.0
-        for imgL, imgR, label in valLoader:
-            imgL = var(imgL).cuda()
-            imgR = var(imgR).cuda()
-            label = var(label).cuda()
-            with torch.no_grad():
+    #     trainloss = sumloss / cnt
+    #     SepConvNet.eval().cuda()
+    #     evalcnt = 0
+    #     pos = 0.0
+    #     sumloss = 0.0
+    #     psnr = 0.0
+    #     for imgL, imgR, label in valLoader:
+    #         imgL = var(imgL).cuda()
+    #         imgR = var(imgR).cuda()
+    #         label = var(label).cuda()
+    #         with torch.no_grad():
 
-                output = SepConvNet(imgL, imgR)
-                loss = SepConvNet_cost(output, label)
+    #             output = SepConvNet(imgL, imgR)
+    #             loss = SepConvNet_cost(output, label)
 
-                sumloss = sumloss + loss.data.item()
-                psnr = psnr + calcPSNR.calcPSNR(output.cpu().data.numpy(), label.cpu().data.numpy())
-                evalcnt = evalcnt + 1
-        # ------------- Tensorboard part -------------
-        writer.add_scalar("Valid SATD loss", sumloss / evalcnt, epoch)
-        writer.add_scalar("Valid PSNR", psnr / valset.__len__(), epoch)
-        # ------------- Tensorboard part -------------
-        print('Validation loss [%.6f],  Average PSNR [%.4f]' % (
-        sumloss / evalcnt, psnr / valset.__len__()))
-        SepConvNet_schedule.step(psnr / valset.__len__())
-        torch.save(SepConvNet.state_dict(),
-                os.path.join('.', 'ft_baseline_iter' + str(epoch + 1)
-                                + '-ltype_fSATD_fs'
-                                + '-lr_' + str(LEARNING_RATE)
-                                + '-trainloss_' + str(round(trainloss, 4))
-                                + '-evalloss_' + str(round(sumloss / evalcnt, 4))
-                                + '-evalpsnr_' + str(round(psnr / valset.__len__(), 4)) + '.pkl'))
-    writer.close()
+    #             sumloss = sumloss + loss.data.item()
+    #             psnr = psnr + calcPSNR.calcPSNR(output.cpu().data.numpy(), label.cpu().data.numpy())
+    #             evalcnt = evalcnt + 1
+    #     # ------------- Tensorboard part -------------
+    #     # writer.add_scalar("Valid SATD loss", sumloss / evalcnt, epoch)
+    #     # writer.add_scalar("Valid PSNR", psnr / valset.__len__(), epoch)
+    #     # ------------- Tensorboard part -------------
+    #     print('Validation loss [%.6f],  Average PSNR [%.4f]' % (
+    #     sumloss / evalcnt, psnr / valset.__len__()))
+    #     SepConvNet_schedule.step(psnr / valset.__len__())
+    #     torch.save(SepConvNet.state_dict(),
+    #             os.path.join('.', 'LSTM_baseline_iter' + str(epoch + 1)
+    #                             + '-ltype_fSATD_fs'
+    #                             + '-lr_' + str(LEARNING_RATE)
+    #                             + '-trainloss_' + str(round(trainloss, 4))
+    #                             + '-evalloss_' + str(round(sumloss / evalcnt, 4))
+    #                             + '-evalpsnr_' + str(round(psnr / valset.__len__(), 4)) + '.pkl'))
+    # writer.close()
 
 if __name__ == "__main__":
     parser = ArgumentParser()

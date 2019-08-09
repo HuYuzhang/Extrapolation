@@ -5,3 +5,4 @@
 *.png
 *.pytorch
 *.pkl
+*.vs*
