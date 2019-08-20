@@ -1,5 +1,10 @@
 '''
-This version is the raw implementation of FKCNN without multi-scale
+This is the beta version of LSTM, which will be used for the derivation of the final LSTM
+
+Some new features are added:
+1. Support bigger validation set's batch_size, from 1 to BATCH_SIZE(same with training), and check for this assumption with assert
+2. Cancel the retain_graph for the final loop, to enable the decreasement of mempry.
+3. For the psnr calculation, now calcPSNR will return the average of this batch
 '''
 import sys
 import torch
@@ -441,9 +446,10 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
     belta2 = 0.999
 
     trainset = vimeodataset(train_set, 'filelist.txt',transform_train)
-    valset = vimeodataset(valid_set, 'test.txt')
+    valset = vimeodataset(valid_set, 'test.txt')    
     trainLoader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True)
-    valLoader = torch.utils.data.DataLoader(valset, batch_size=1, shuffle=False)
+    valLoader = torch.utils.data.DataLoader(valset, batch_size=BATCH_SIZE, shuffle=False)
+    assert(len(valset) % BATCH_SIZE == 0)
 
 
     SepConvNet = Network().cuda()
@@ -471,7 +477,7 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
         cnt = 0
         sumloss = 0.0 # The sumloss is for the whole training_set
         tsumloss = 0.0 # The tsumloss is for the printinterval
-        printinterval = 100
+        printinterval = 300
         print("---------------[Epoch%3d]---------------"%(epoch + 1))
         for label_list in trainLoader:
             bad_list = label_list[7:]
@@ -495,30 +501,21 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
                     output, stat = SepConvNet(imgL, imgR, res, stat)
                     res = poor_label - output
                     loss_s.append(SepConvNet_cost(output, label))
-            # IPython.embed()
+            
             loss = (loss_s[0] + loss_s[1] + loss_s[2] + loss_s[3] + loss_s[4]) / 5
             loss.backward()
             SepConvNet_optimizer.step()
             
             sumloss = sumloss + loss.data.item()
             tsumloss = tsumloss + loss.data.item()
-            # print("finish ", cnt)
-
             if cnt % printinterval == 0:
-                # writer.add_image("Ref1 image", imgL[0], cnt)
-                # writer.add_image("Ref2 image", imgR[0], cnt)
-                # writer.add_image("Pred image", output[0], cnt)
-                # writer.add_image("Target image", label[0], cnt)
-                # writer.add_scalar('Train Batch SATD loss', loss.data.item(), int(global_step / printinterval))
-                # writer.add_scalar('Train Interval SATD loss', tsumloss / printinterval, int(global_step / printinterval))
                 print('Epoch [%d/%d], Iter [%d/%d], Time [%4.4f], Batch loss [%.6f], Interval loss [%.6f]' %
                     (epoch + 1, EPOCH, cnt, len(trainset) // BATCH_SIZE, time.time() - start_time, loss.data.item(), tsumloss / printinterval))
                 tsumloss = 0.0
         print('Epoch [%d/%d], iter: %d, Time [%4.4f], Avg Loss [%.6f]' %
             (epoch + 1, EPOCH, cnt, time.time() - start_time, sumloss / cnt))
 
-        if epoch % 5 != 4:
-            continue
+
         # ---------------- Part for validation ----------------
         trainloss = sumloss / cnt
         SepConvNet.eval().cuda()
@@ -527,27 +524,34 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
         sumloss = 0.0
         psnr = 0.0
         for label_list in valLoader:
+            
             bad_list = label_list[7:]
             label_list = label_list[:7]
             loss_s = []
             with torch.no_grad():
                 for i in range(5):
+
                     imgL = var(bad_list[i]).cuda()
                     imgR = var(bad_list[i+1]).cuda()
                     label = var(label_list[i+2]).cuda()
                     poor_label = var(bad_list[i+2]).cuda()
+
                     if i == 0:
                         output, stat = SepConvNet(imgL, imgR)
                         psnr = psnr + calcPSNR.calcPSNR(output.cpu().data.numpy(), label.cpu().data.numpy())
                         res = poor_label - output
-                        loss_s.append(SepConvNet_cost(output, label))
+
+                        loss = SepConvNet_cost(output, label)
+                        sumloss = sumloss + loss.data.item()
+
                     else:
                         output, stat = SepConvNet(imgL, imgR, res, stat)
                         psnr = psnr + calcPSNR.calcPSNR(output.cpu().data.numpy(), label.cpu().data.numpy())
                         res = poor_label - output
-                        loss_s.append(SepConvNet_cost(output, label))
-                loss = (loss_s[0] + loss_s[1] + loss_s[2] + loss_s[3] + loss_s[4])
-                sumloss = sumloss + loss.data.item()
+
+                        loss = SepConvNet_cost(output, label)
+                        sumloss = sumloss + loss.data.item()
+                
                 evalcnt = evalcnt + 5
 
         # ------------- Tensorboard part -------------
@@ -558,7 +562,7 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
         sumloss / evalcnt, psnr / evalcnt))
         SepConvNet_schedule.step(psnr / evalcnt)
         torch.save(SepConvNet.state_dict(),
-                os.path.join('.', 'bv_LSTM_poor_iter' + str(epoch + 1)
+                os.path.join('.', 'beta2_LSTM_iter' + str(epoch + 1)
                                 + '-ltype_fSATD_fs'
                                 + '-lr_' + str(LEARNING_RATE)
                                 + '-trainloss_' + str(round(trainloss, 4))

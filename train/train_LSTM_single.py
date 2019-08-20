@@ -480,7 +480,6 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
             # exit()
             global_step = global_step + 1
             cnt = cnt + 1
-            SepConvNet_optimizer.zero_grad()
             loss_s = []
             for i in range(5):
                 imgL = var(bad_list[i]).cuda()
@@ -488,20 +487,47 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
                 label = var(label_list[i+2]).cuda()
                 poor_label = var(bad_list[i+2]).cuda()
                 if i == 0:
+                    SepConvNet_optimizer.zero_grad()
+
                     output, stat = SepConvNet(imgL, imgR)
                     res = poor_label - output
-                    loss_s.append(SepConvNet_cost(output, label))
-                else:
+                    loss = SepConvNet_cost(output, label)
+
+                    loss.backward(retain_graph=True)
+                    SepConvNet_optimizer.step()
+
+                    sumloss = sumloss + loss.data.item()
+                    tsumloss = tsumloss + loss.data.item()
+
+                elif i < 4:
+                    SepConvNet_optimizer.zero_grad()
+
                     output, stat = SepConvNet(imgL, imgR, res, stat)
                     res = poor_label - output
-                    loss_s.append(SepConvNet_cost(output, label))
+                    loss = SepConvNet_cost(output, label)
+
+                    loss.backward(retain_graph=True)
+                    SepConvNet_optimizer.step()
+
+                    sumloss = sumloss + loss.data.item()
+                    tsumloss = tsumloss + loss.data.item()
+                else:
+                    SepConvNet_optimizer.zero_grad()
+
+                    output, stat = SepConvNet(imgL, imgR, res, stat)
+                    res = poor_label - output
+                    loss = SepConvNet_cost(output, label)
+
+                    loss.backward()
+                    SepConvNet_optimizer.step()
+
+                    sumloss = sumloss + loss.data.item()
+                    tsumloss = tsumloss + loss.data.item()
             # IPython.embed()
-            loss = (loss_s[0] + loss_s[1] + loss_s[2] + loss_s[3] + loss_s[4]) / 5
-            loss.backward()
-            SepConvNet_optimizer.step()
+            # loss = (loss_s[0] + loss_s[1] + loss_s[2] + loss_s[3] + loss_s[4]) / 5
             
-            sumloss = sumloss + loss.data.item()
-            tsumloss = tsumloss + loss.data.item()
+            
+            
             # print("finish ", cnt)
 
             if cnt % printinterval == 0:
@@ -512,10 +538,10 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
                 # writer.add_scalar('Train Batch SATD loss', loss.data.item(), int(global_step / printinterval))
                 # writer.add_scalar('Train Interval SATD loss', tsumloss / printinterval, int(global_step / printinterval))
                 print('Epoch [%d/%d], Iter [%d/%d], Time [%4.4f], Batch loss [%.6f], Interval loss [%.6f]' %
-                    (epoch + 1, EPOCH, cnt, len(trainset) // BATCH_SIZE, time.time() - start_time, loss.data.item(), tsumloss / printinterval))
+                    (epoch + 1, EPOCH, cnt, len(trainset) // BATCH_SIZE, time.time() - start_time, loss.data.item(), tsumloss / printinterval / 5))
                 tsumloss = 0.0
         print('Epoch [%d/%d], iter: %d, Time [%4.4f], Avg Loss [%.6f]' %
-            (epoch + 1, EPOCH, cnt, time.time() - start_time, sumloss / cnt))
+            (epoch + 1, EPOCH, cnt, time.time() - start_time, sumloss / cnt / 5))
 
         if epoch % 5 != 4:
             continue
@@ -558,7 +584,7 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
         sumloss / evalcnt, psnr / evalcnt))
         SepConvNet_schedule.step(psnr / evalcnt)
         torch.save(SepConvNet.state_dict(),
-                os.path.join('.', 'bv_LSTM_poor_iter' + str(epoch + 1)
+                os.path.join('.', 'single_LSTM_iter' + str(epoch + 1)
                                 + '-ltype_fSATD_fs'
                                 + '-lr_' + str(LEARNING_RATE)
                                 + '-trainloss_' + str(round(trainloss, 4))
