@@ -1,7 +1,10 @@
 '''
-This is the dual version from beta LSTM, and its change is the full utilize of training data
-That is, I will operate the frame prediction from both the forward and backard. So it must be time consuming...
-2019.8.16.14.16
+This version runs on X5.
+
+It just apply the dataset twice based on the v1, which means that it will do the backforward prediction with the reverse() runction
+And its network's structure is just as same as v1
+
+I let it run for a long time and hardly care about it. Now it reach the PSNR of 30.20, but its not enough.
 '''
 import sys
 import torch

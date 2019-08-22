@@ -1,10 +1,14 @@
 '''
-This is the beta version of LSTM, which will be used for the derivation of the final LSTM
+run on X5
 
-Some new features are added:
-1. Support bigger validation set's batch_size, from 1 to BATCH_SIZE(same with training), and check for this assumption with assert
-2. Cancel the retain_graph for the final loop, to enable the decreasement of mempry.
-3. For the psnr calculation, now calcPSNR will return the average of this batch
+This is the raw version of LSTM, which will be used for the derivation of the final LSTM
+
+Its structure is extremely simple and is not the best one. 
+
+It will just concat the output of the LSTM to the encoder's input. But now I find that it might be better to apply this temporal info to the generation of the coffificient of the sepconv,
+ as what I do in the tail/tail2
+
+ Now its PSNR is about 30.15 which a already long training time. So it won't be my final choice, just F.I.
 '''
 import sys
 import torch

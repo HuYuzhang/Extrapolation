@@ -1,10 +1,10 @@
 '''
-This version might be a important part, which I get the idea from Xiazong, to move the LSTM part to the generation of the sepconv' coefficient
+run on X5
+Second best version, similiar with tail, but I will first conv the residual before it is put into the LSTM.
 
-In this way, I can just load the old param from the prev-trained parameter~
+Though with the metric of PSNR and SATD, it shows similiar performance, but for the BD-RATE saving, it is much worse...(-2.7% BD-RATE saving)
 
-And for the LSTM's input/output size, some modification should be made
-So let's just begin
+Right now I just don't know what's the problem... Maybe the first convolution result in some info loss? Wait to be thought.
 '''
 import sys
 import torch
