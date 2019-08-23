@@ -1,7 +1,11 @@
 '''
-Run on X5
 
+This is my first version of the really true dual-prediction version. Which apply two LSTM-module to memory the 
+forward-backward error.
+So here we will use two LSTM modules, one for forward and one for backward
 
+But for the generation of sepconv kernel, both the forward and backward error would be used~
+I believe this change can work!
 '''
 import sys
 import torch
@@ -90,63 +94,6 @@ class vimeodataset(data.Dataset):
             IPython.embed()
             exit()
 
-
-class mydataset(data.Dataset):
-    def __init__(self, datasetpath, transform=None):
-        self.transform=transform
-        self.readdir = datasetpath
-        self.imgstrs = []
-        for filename in os.listdir(self.readdir):
-            if filename.__len__() > 6 and filename[-6:] == '_L.bmp':
-                self.imgstrs.append(filename)
-
-    def __len__(self):
-        return len(self.imgstrs)
-
-    def __getitem__(self, idx):
-        imgstr = self.imgstrs[idx]
-        img1str = os.path.join(self.readdir, imgstr)
-        img2str = os.path.join(self.readdir, imgstr[:-6] + '_R.bmp')
-
-        corder = 0
-        if corder == 0 or self.transform is None:
-            img1 = np.array(pilImg.open(img1str))
-            img2 = np.array(pilImg.open(img2str))
-        else:
-            img1 = np.array(pilImg.open(img2str))
-            img2 = np.array(pilImg.open(img1str))
-
-        img3 = np.array(pilImg.open(os.path.join(self.readdir, imgstr[:-6] + '_M.bmp')))
-
-        if self.transform is not None:
-            # random shift and crop
-            cropx = random.randint(2, 20)
-            cropy = random.randint(2, 20)
-
-
-
-            shift = random.randint(0, 2)
-            ifx = random.randint(0, 1)
-            shiftx = 0
-            shifty = 0
-
-            img3 = img3[cropy:cropy + 128, cropx:cropx + 128, :]
-            img1 = img1[cropy - shifty:cropy + 128 - shifty, cropx - shiftx : cropx + 128 - shiftx,:]
-            img2 = img2[cropy + shifty:cropy + 128 + shifty, cropx + shiftx : cropx + 128 + shiftx,:]
-
-            flipH = random.randint(0, 1)
-            flipV = random.randint(0,1)
-            if flipH==1:
-                img1=np.flip(img1,0)
-                img2 = np.flip(img2, 0)
-                img3 = np.flip(img3, 0)
-            if flipV==1:
-                img1=np.flip(img1,1)
-                img2 = np.flip(img2, 1)
-                img3 = np.flip(img3, 1)
-
-        return var(torch.from_numpy(img1.transpose(2,0,1).astype(np.float32) / 255.0)), var(torch.from_numpy(img2.transpose(2,0,1).astype(np.float32) / 255.0)), \
-               var(torch.from_numpy(img3.transpose(2,0,1).astype(np.float32) / 255.0))
 
 
 class ConvLSTMCell(nn.Module):
@@ -269,11 +216,10 @@ class ConvLSTM(nn.Module):
         return h, c
 
 
-
 class Network(torch.nn.Module):
     def __init__(self):
         super(Network, self).__init__()
-
+        # self.opt = opter
         def Basic(intInput, intOutput):
             return torch.nn.Sequential(
                 torch.nn.Conv2d(in_channels=intInput, out_channels=intOutput, kernel_size=3, stride=1, padding=1),
@@ -298,7 +244,9 @@ class Network(torch.nn.Module):
             )
         # end
 
-        self.moduleConv1 = Basic(6, 32)
+    
+    # ------------------- Encoder Part -----------------
+        self.moduleConv1 = Basic(6, 32) #
         self.modulePool1 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
 
         self.moduleConv2 = Basic(32, 64)
@@ -312,7 +260,8 @@ class Network(torch.nn.Module):
 
         self.moduleConv5 = Basic(256, 512)
         self.modulePool5 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-
+    
+    # ------------------- Decoder Part -----------------
         self.moduleDeconv5 = Basic(512, 512)
         self.moduleUpsample5 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
@@ -327,22 +276,12 @@ class Network(torch.nn.Module):
             torch.nn.ReLU(inplace=False)
         )
 
-        self.mv1_a_ = Subnet(384,13)
-        self.mv2_a_ = Subnet(384, 13)
-        self.mh1_a_ = Subnet(384, 13)
-        self.mh2_a_ = Subnet(384, 13)
-
         self.moduleDeconv3 = Basic(256, 128)
         self.moduleUpsample3 = torch.nn.Sequential(
             torch.nn.Upsample(scale_factor=2, mode='bilinear', align_corners=True),
             torch.nn.Conv2d(in_channels=128, out_channels=128, kernel_size=3, stride=1, padding=1),
             torch.nn.ReLU(inplace=False)
         )
-
-        self.mv1_b_ = Subnet(192, 25)
-        self.mv2_b_ = Subnet(192, 25)
-        self.mh1_b_ = Subnet(192, 25)
-        self.mh2_b_ = Subnet(192, 25)
 
         self.moduleDeconv2 = Basic(128, 64)
         self.moduleUpsample2 = torch.nn.Sequential(
@@ -351,34 +290,38 @@ class Network(torch.nn.Module):
             torch.nn.ReLU(inplace=False)
         )
 
-        self.moduleVertical1_ = Subnet(96,51)
-        self.moduleVertical2_ = Subnet(96,51)
-        self.moduleHorizontal1_ = Subnet(96,51)
-        self.moduleHorizontal2_ = Subnet(96,51)
+        self.moduleVertical1_f = Subnet(96,51)
+        self.moduleVertical2_f = Subnet(96,51)
+        self.moduleHorizontal1_f = Subnet(96,51)
+        self.moduleHorizontal2_f = Subnet(96,51)
+
+        self.moduleVertical1_b = Subnet(96,51)
+        self.moduleVertical2_b = Subnet(96,51)
+        self.moduleHorizontal1_b = Subnet(96,51)
+        self.moduleHorizontal2_b = Subnet(96,51)
 
         self.modulePad_a = torch.nn.ReplicationPad2d(
             [int(math.floor(6)), int(math.floor(6)), int(math.floor(6)), int(math.floor(6))])
         self.modulePad_b = torch.nn.ReplicationPad2d(
             [int(math.floor(12)), int(math.floor(12)), int(math.floor(12)), int(math.floor(12))])
         self.modulePad = torch.nn.ReplicationPad2d([ int(math.floor(25)), int(math.floor(25)), int(math.floor(25)), int(math.floor(25)) ])
-        # ------------------- LSTM Part -----------------
-        # Note that all new layers should be put here to keep the instant of the baseline's layer~
-        self.moduleLSTM = ConvLSTM(3, 32)
-        self.moduleConvH0 = Basic(32, 32)
-        self.moduleDownH0 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-        self.moduleConvH1 = Basic(32, 64)
-        self.moduleDownH1 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-        self.moduleConvH2 = Basic(64, 128)
-        self.moduleDownH2 = torch.nn.AvgPool2d(kernel_size=2, stride=2)
-        # ------------------- Initialize Part -----------------
+
+    # ------------------- LSTM Part -----------------
+        self.moduleLSTM = ConvLSTM(6, 16)
+
+        self.moduleConvH_f = Basic(16, 16)
+        self.moduleDownH_f = torch.nn.AvgPool2d(kernel_size=2, stride=2)
+
+        self.moduleConvH_b = Basic(16, 16)
+        self.moduleDownH_b = torch.nn.AvgPool2d(kernel_size=2, stride=2)
+    # ------------------- Initialize Part -----------------
         for m in self.modules():
             if isinstance(m, nn.Conv2d):
                 m.weight.data.normal_(0, 0.01)
                 if m.bias is not None:
                     m.bias.data.zero_()
-        # LSTM part 
 
-    def forward(self, tensorInput1, tensorInput2, tensorResidual=None, tensorHidden=None):
+    def forward(self, tensorInput1, tensorInput2, tensorResidual_f=None, tensorResidual_b=None, tensorHidden=None):
         '''
         tensorInput1/2 : [bcz, 3, height, width]
         tensorResidual:  [bcz, 3, height, width]
@@ -387,92 +330,128 @@ class Network(torch.nn.Module):
         '''
         batch_size = tensorInput1.size(0)
     # ------------------- LSTM Part --------------------
-        if tensorResidual is None:
-            tensorResidual = var(torch.zeros(batch_size, tensorInput1.size(1), tensorInput1.size(2), tensorInput1.size(3))).cuda()
-            tensorH_next, tensorC_next = self.moduleLSTM(tensorResidual) # Hence we also don't have the tensorHidden
+        if tensorResidual_f is None:
+            tensorResidual_f = var(torch.zeros(batch_size, tensorInput1.size(1), tensorInput1.size(2), tensorInput1.size(3))).cuda()
+            tensorResidual_b = var(torch.zeros(batch_size, tensorInput1.size(1), tensorInput1.size(2), tensorInput1.size(3))).cuda()
+            tensorResidual_cat = torch.cat([tensorResidual_f, tensorResidual_b], 1)
+
+            tensorH_next, tensorC_next = self.moduleLSTM(tensorResidual_cat) 
         else:
-            tensorH_next, tensorC_next = self.moduleLSTM(tensorResidual, tensorHidden)
+            tensorResidual_cat = torch.cat([tensorResidual_f, tensorResidual_b], 1)
+            tensorH_next, tensorC_next = self.moduleLSTM(tensorResidual_cat, tensorHidden) 
 
-        # ------------------------- I use the convolution with stride of 2 to work as a downsample function~, which accords to the resolution of [128, 128], [64, 64], [32, 32]
-        tensorL0 = self.moduleDownH0(self.moduleConvH0(tensorH_next))
-        tensorL1 = self.moduleDownH1(self.moduleConvH1(tensorL0))
-        tensorL2 = self.moduleDownH2(self.moduleConvH2(tensorL1))
-        # tensorL1 = self.moduleDownLSTM1(tensorL0)
-        # tensorL2 = self.moduleDownLSTM2(tensorL1)
-        # ------------------------- I use the convolution with stride of 2 to work as a downsample function~, which accords to the resolution of [128, 128], [64, 64], [32, 32]
-
-
+        tensorEncRes_f =   self.moduleDownH_f(self.moduleConvH_f(tensorH_next))
+        tensorEncRes_b =   self.moduleDownH_b(self.moduleConvH_b(tensorH_next))
+        tensorCombine2 = torch.cat([tensorEncRes_f, tensorEncRes_b], 1)
+    # First let's do the forward prediction~
+    # ------------------- Encoder Part -----------------
         tensorJoin = torch.cat([ tensorInput1, tensorInput2 ], 1)
-        tensorConv1 = self.moduleConv1(tensorJoin)
+
+        tensorConv1 = self.moduleConv1(tensorJoin)#[32, 128, 128]
         tensorPool1 = self.modulePool1(tensorConv1)
 
-        tensorConv2 = self.moduleConv2(tensorPool1)
+        tensorConv2 = self.moduleConv2(tensorPool1)#[64, 64, 64]
         tensorPool2 = self.modulePool2(tensorConv2)
 
-        tensorConv3 = self.moduleConv3(tensorPool2)
+        tensorConv3 = self.moduleConv3(tensorPool2)#[128, 32, 32]
         tensorPool3 = self.modulePool3(tensorConv3)
 
-        tensorConv4 = self.moduleConv4(tensorPool3)
+        tensorConv4 = self.moduleConv4(tensorPool3)#[256, 16, 16]
         tensorPool4 = self.modulePool4(tensorConv4)
 
-        tensorConv5 = self.moduleConv5(tensorPool4)
+        tensorConv5 = self.moduleConv5(tensorPool4)#[512, 8, 8]
         tensorPool5 = self.modulePool5(tensorConv5)
 
-        tensorDeconv5 = self.moduleDeconv5(tensorPool5)
-        tensorUpsample5 = self.moduleUpsample5(tensorDeconv5)
+    # ------------------- Doceder Part -----------------
+        tensorDeconv5 = self.moduleDeconv5(tensorPool5)#[512, 4, 4]
+        tensorUpsample5 = self.moduleUpsample5(tensorDeconv5)#[512, 8, 8]
 
-        tensorCombine = tensorUpsample5 + tensorConv5
+        tensorCombine = tensorUpsample5 + tensorConv5#[512, 8, 8]
 
-        tensorDeconv4 = self.moduleDeconv4(tensorCombine)
-        tensorUpsample4 = self.moduleUpsample4(tensorDeconv4)
+        tensorDeconv4 = self.moduleDeconv4(tensorCombine)#[256, 8, 8]
+        tensorUpsample4 = self.moduleUpsample4(tensorDeconv4)#[256, 16, 16]
 
-        tensorCombine = tensorUpsample4 + tensorConv4
+        tensorCombine = tensorUpsample4 + tensorConv4#[256, 16, 16]
+
+        tensorDeconv3 = self.moduleDeconv3(tensorCombine)#[128, 16, 16]
+        tensorUpsample3 = self.moduleUpsample3(tensorDeconv3)#[128, 32, 32]
+
+        tensorCombine = tensorUpsample3 + tensorConv3#[128, 32, 32]
+
+        tensorDeconv2 = self.moduleDeconv2(tensorCombine)#[64, 32, 32]
+        tensorUpsample2 = self.moduleUpsample2(tensorDeconv2)#[64, 64, 64]
+
+        tensorCombine1 = tensorUpsample2 + tensorConv2#[64, 64, 64]
+
+        tensorCombine = torch.cat([tensorCombine1, tensorCombine2], 1)
+
+        tensorDot1 = sepconv.FunctionSepconv()(self.modulePad(tensorInput1), self.moduleVertical1_f(tensorCombine),
+                                                self.moduleHorizontal1_f(tensorCombine))
+        tensorDot2 = sepconv.FunctionSepconv()(self.modulePad(tensorInput2), self.moduleVertical2_f(tensorCombine),
+                                                self.moduleHorizontal2_f(tensorCombine))
+
+        tensorRet_f = tensorDot1 + tensorDot2
+
+        # ---------------------------------- Then begin the backforward prediction~ --------------------------------------------
+        tensorJoin = torch.cat([ tensorRet_f, tensorInput2 ], 1)
+
+        tensorConv1 = self.moduleConv1(tensorJoin)#[32, 128, 128]
+        tensorPool1 = self.modulePool1(tensorConv1)
+
+        tensorConv2 = self.moduleConv2(tensorPool1)#[64, 64, 64]
+        tensorPool2 = self.modulePool2(tensorConv2)
+
+        tensorConv3 = self.moduleConv3(tensorPool2)#[128, 32, 32]
+        tensorPool3 = self.modulePool3(tensorConv3)
+
+        tensorConv4 = self.moduleConv4(tensorPool3)#[256, 16, 16]
+        tensorPool4 = self.modulePool4(tensorConv4)
+
+        tensorConv5 = self.moduleConv5(tensorPool4)#[512, 8, 8]
+        tensorPool5 = self.modulePool5(tensorConv5)
+
+    # ------------------- Doceder Part -----------------
+        tensorDeconv5 = self.moduleDeconv5(tensorPool5)#[512, 4, 4]
+        tensorUpsample5 = self.moduleUpsample5(tensorDeconv5)#[512, 8, 8]
+
+        tensorCombine = tensorUpsample5 + tensorConv5#[512, 8, 8]
+
+        tensorDeconv4 = self.moduleDeconv4(tensorCombine)#[256, 8, 8]
+        tensorUpsample4 = self.moduleUpsample4(tensorDeconv4)#[256, 16, 16]
+
+        tensorCombine = tensorUpsample4 + tensorConv4#[256, 16, 16]
+
+        tensorDeconv3 = self.moduleDeconv3(tensorCombine)#[128, 16, 16]
+        tensorUpsample3 = self.moduleUpsample3(tensorDeconv3)#[128, 32, 32]
+
+        tensorCombine = tensorUpsample3 + tensorConv3#[128, 32, 32]
+
+        tensorDeconv2 = self.moduleDeconv2(tensorCombine)#[64, 32, 32]
+        tensorUpsample2 = self.moduleUpsample2(tensorDeconv2)#[64, 64, 64]
+
+        tensorCombine1 = tensorUpsample2 + tensorConv2#[64, 64, 64]
+
+        tensorCombine = torch.cat([tensorCombine1, tensorCombine2], 1)
+
+        tensorDot1 = sepconv.FunctionSepconv()(self.modulePad(tensorInput1), self.moduleVertical1_b(tensorCombine),
+                                                self.moduleHorizontal1_b(tensorCombine))
+        tensorDot2 = sepconv.FunctionSepconv()(self.modulePad(tensorInput2), self.moduleVertical2_b(tensorCombine),
+                                                self.moduleHorizontal2_b(tensorCombine))
         
-        # ------- LSTM combine ------------
-        tensorCombineL2 = torch.cat([tensorCombine, tensorL2], 1) # This channel is 256 + 128 = 384
-        # ------- LSTM combine ------------
+        tensorRet_b = tensorDot1 + tensorDot2
+    # Return the predictd tensor and the next state of convLSTM
+        return tensorRet_f, tensorRet_b, (tensorH_next, tensorC_next)
 
-        tensorDot1_a = sepconv.FunctionSepconv()(self.modulePad_a(func.upsample(tensorInput1,size=(tensorInput1.shape[2]//4,tensorInput1.shape[3]//4),mode='bilinear',align_corners=True)),
-                                                  self.mv1_a_(tensorCombineL2),self.mh1_a_(tensorCombineL2))
-        tensorDot2_a = sepconv.FunctionSepconv()(self.modulePad_a(func.upsample(tensorInput2, size=(tensorInput1.shape[2] // 4, tensorInput1.shape[3] // 4), mode='bilinear',
-                          align_corners=True)), self.mv2_a_(tensorCombineL2), self.mh2_a_(tensorCombineL2))
-
-        tensorDeconv3 = self.moduleDeconv3(tensorCombine)
-        tensorUpsample3 = self.moduleUpsample3(tensorDeconv3)
-
-        tensorCombine = tensorUpsample3 + tensorConv3
-
-        # ------- LSTM combine ------------
-        tensorCombineL1 = torch.cat([tensorCombine, tensorL1], 1) # This channel is 128 + 64 = 192
-        # ------- LSTM combine ------------
-        tensorDot1_b = sepconv.FunctionSepconv()(self.modulePad_b(func.upsample(tensorInput1, size=(tensorInput1.shape[2] // 2, tensorInput1.shape[3] // 2), mode='bilinear',
-                           align_corners=True)),self.mv1_b_(tensorCombineL1), self.mh1_b_(tensorCombineL1))
-        tensorDot2_b = sepconv.FunctionSepconv()(self.modulePad_b(func.upsample(tensorInput2, size=(tensorInput1.shape[2] // 2, tensorInput1.shape[3] // 2), mode='bilinear',
-                          align_corners=True)), self.mv2_b_(tensorCombineL1), self.mh2_b_(tensorCombineL1))
-
-        tensorDeconv2 = self.moduleDeconv2(tensorCombine)
-        tensorUpsample2 = self.moduleUpsample2(tensorDeconv2)
-
-        tensorCombine = tensorUpsample2 + tensorConv2
-        # ------- LSTM combine ------------
-        tensorCombineL0 = torch.cat([tensorCombine, tensorL0], 1) # This channel is 64 + 32 = 96
-        # ------- LSTM combine ------------
-        tensorDot1 = sepconv.FunctionSepconv()(self.modulePad(tensorInput1), self.moduleVertical1_(tensorCombineL0),
-                                                self.moduleHorizontal1_(tensorCombineL0))
-        tensorDot2 = sepconv.FunctionSepconv()(self.modulePad(tensorInput2), self.moduleVertical2_(tensorCombineL0),
-                                                self.moduleHorizontal2_(tensorCombineL0))
-
-        return tensorDot1 + tensorDot2, tensorDot1_a + tensorDot2_a, tensorDot1_b + tensorDot2_b, (tensorH_next, tensorC_next)
 
     def load_my_state_dict(self, state_dict):
         own_state = self.state_dict()
         for name, param in state_dict.items():
-            # print('load: ', name)
             if name not in own_state:
                 continue
             if isinstance(param, torch.nn.Parameter):
                 param = param.data
             own_state[name].copy_(param)
+            # print('load: ', name)
 
 
 def main(lr, batch_size, epoch, gpu, train_set, valid_set):
@@ -492,39 +471,21 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
     trainset = vimeodataset(train_set, 'filelist.txt',transform_train)
     valset = vimeodataset(valid_set, 'test.txt')    
     trainLoader = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=True)
-    valLoader = torch.utils.data.DataLoader(valset, batch_size=BATCH_SIZE*2, shuffle=False)
+    valLoader = torch.utils.data.DataLoader(valset, batch_size=BATCH_SIZE, shuffle=False)
     assert(len(valset) % BATCH_SIZE == 0)
 
 
     SepConvNet = Network().cuda()
     # SepConvNet.apply(weights_init)
-    # SepConvNet.load_my_state_dict(torch.load('SepConv_iter95-ltype_fSATD_fs-lr_0.0001-trainloss_0.1441-evalloss_0.1324-evalpsnr_29.9585.pkl', map_location="cuda:%d"%(gpu)))
-    SepConvNet.load_my_state_dict(torch.load('SepConv_iter95-ltype_fSATD_fs-lr_0.0001-trainloss_0.1441-evalloss_0.1324-evalpsnr_29.9585.pkl', map_location="cuda:%d"%(gpu)))
+    SepConvNet.load_my_state_dict(torch.load('ft2_baseline_iter86-ltype_fSATD_fs-lr_0.001-trainloss_0.1249-evalloss_0.1155-evalpsnr_29.9327.pkl', map_location='cuda:%d'%(gpu)))
+    # SepConvNet.load_state_dict(torch.load('beta_LSTM_iter8-ltype_fSATD_fs-lr_0.001-trainloss_0.557-evalloss_0.1165-evalpsnr_29.8361.pkl'))
 
     # MSE_cost = nn.MSELoss().cuda()
     # SepConvNet_cost = nn.L1Loss().cuda()
-    
-
-    child_cnt = 0
-
-    skip_childs = list(set(range(33)) - set([14,15,16,17,  20,21,22,23,  26,27,28,29]))
-    for child in SepConvNet.children():
-        # print('-----------  Children:%d ----------------'%(child_cnt))
-        # print(child)
-        param_cnt = 0
-        if not child_cnt in skip_childs:
-            for param in child.parameters():
-                # print("Param: %d in child: %d is frozen"%(param_cnt, child_cnt))
-                param.requires_grad = False
-                param_cnt += 1
-        child_cnt += 1
-        
     SepConvNet_cost = sepconv.SATDLoss().cuda()
-    # SepConvNet_optimizer = optim.Adamax(SepConvNet.parameters(),lr=LEARNING_RATE, betas=(belta1,belta2))
-    SepConvNet_optimizer = optim.Adamax(filter(lambda p: p.requires_grad, SepConvNet.parameters()),lr=LEARNING_RATE, betas=(belta1,belta2))
-    SepConvNet_schedule = optim.lr_scheduler.ReduceLROnPlateau(SepConvNet_optimizer, factor=0.1, patience = 3, verbose=True, min_lr=1e-6)
-    # IPython.embed()
-    # exit()
+    SepConvNet_optimizer = optim.Adamax(SepConvNet.parameters(),lr=LEARNING_RATE, betas=(belta1,belta2))
+    SepConvNet_schedule = optim.lr_scheduler.ReduceLROnPlateau(SepConvNet_optimizer, factor=0.1, patience = 3, verbose=True)
+
     # ----------------  Time part -------------------
     start_time = time.time()
     global_step = 0
@@ -540,7 +501,7 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
         cnt = 0
         sumloss = 0.0 # The sumloss is for the whole training_set
         tsumloss = 0.0 # The tsumloss is for the printinterval
-        printinterval = 300
+        printinterval = 100
         print("---------------[Epoch%3d]---------------"%(epoch + 1))
         for label_list in trainLoader:
             bad_list = label_list[7:]
@@ -549,60 +510,33 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
             # exit()
             global_step = global_step + 1
             cnt = cnt + 1
-            loss_s = []
             for i in range(5):
                 imgL = var(bad_list[i]).cuda()
                 imgR = var(bad_list[i+1]).cuda()
                 label = var(label_list[i+2]).cuda()
                 poor_label = var(bad_list[i+2]).cuda()
+                label_L = var(label_list[i]).cuda()
+                SepConvNet_optimizer.zero_grad()
+
                 if i == 0:
-                    SepConvNet_optimizer.zero_grad()
-
-                    output, output_a, output_b, stat = SepConvNet(imgL, imgR)
-                    res = poor_label - output
-                    # loss = SepConvNet_cost(output, label)
-                    loss = 0.5*SepConvNet_cost(output, label) + \
-                            0.2*SepConvNet_cost(output_a,func.upsample(label, size=(label.shape[2] // 4, label.shape[3] // 4), mode='bilinear',align_corners=True)) + \
-                            0.3*SepConvNet_cost(output_b,func.upsample(label, size=(label.shape[2] // 2, label.shape[3] // 2), mode='bilinear',align_corners=True))
-
-                    loss.backward(retain_graph=True)
-                    SepConvNet_optimizer.step()
-
-                    sumloss = sumloss + loss.data.item()
-                    tsumloss = tsumloss + loss.data.item()
-
-                elif i < 4:
-                    SepConvNet_optimizer.zero_grad()
-
-                    output, output_a, output_b, stat = SepConvNet(imgL, imgR, res, stat)
-                    res = poor_label - output
-                    # loss = SepConvNet_cost(output, label)
-                    loss = 0.5*SepConvNet_cost(output, label) + \
-                            0.2*SepConvNet_cost(output_a,func.upsample(label, size=(label.shape[2] // 4, label.shape[3] // 4), mode='bilinear',align_corners=True)) + \
-                            0.3*SepConvNet_cost(output_b,func.upsample(label, size=(label.shape[2] // 2, label.shape[3] // 2), mode='bilinear',align_corners=True))
-                            
-                    loss.backward(retain_graph=True)
-                    SepConvNet_optimizer.step()
-
-                    sumloss = sumloss + loss.data.item()
-                    tsumloss = tsumloss + loss.data.item()
+                    output_f, output_b, stat = SepConvNet(imgL, imgR)
                 else:
-                    SepConvNet_optimizer.zero_grad()
+                    output_f, output_b, stat = SepConvNet(imgL, imgR, res_f, res_b, stat)
+                
+                res_f = poor_label - output_f
+                res_b = imgL - output_b
 
-                    output, output_a, output_b, stat = SepConvNet(imgL, imgR, res, stat)
-                    res = poor_label - output
-                    # loss = SepConvNet_cost(output, label)
-                    loss = 0.5*SepConvNet_cost(output, label) + \
-                            0.2*SepConvNet_cost(output_a,func.upsample(label, size=(label.shape[2] // 4, label.shape[3] // 4), mode='bilinear',align_corners=True)) + \
-                            0.3*SepConvNet_cost(output_b,func.upsample(label, size=(label.shape[2] // 2, label.shape[3] // 2), mode='bilinear',align_corners=True))
+                loss = 0.5 * SepConvNet_cost(output_f, label) + 0.5 * SepConvNet_cost(output_b, label_L)
 
+                if i < 4:
+                    loss.backward(retain_graph=True)
+                else:
                     loss.backward()
-                    SepConvNet_optimizer.step()
+                    
+                SepConvNet_optimizer.step()
 
-                    sumloss = sumloss + loss.data.item()
-                    tsumloss = tsumloss + loss.data.item()
-            
-            
+                sumloss = sumloss + loss.data.item()
+                tsumloss = tsumloss + loss.data.item()
             
             if cnt % printinterval == 0:
                 print('Epoch [%d/%d], Iter [%d/%d], Time [%4.4f], Batch loss [%.6f], Interval loss [%.6f]' %
@@ -623,7 +557,6 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
             
             bad_list = label_list[7:]
             label_list = label_list[:7]
-            loss_s = []
             with torch.no_grad():
                 for i in range(5):
 
@@ -631,22 +564,19 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
                     imgR = var(bad_list[i+1]).cuda()
                     label = var(label_list[i+2]).cuda()
                     poor_label = var(bad_list[i+2]).cuda()
+                    label_L = var(label_list[i]).cuda()
 
                     if i == 0:
-                        output, output_a, output_b, stat = SepConvNet(imgL, imgR)
-                        psnr = psnr + calcPSNR.calcPSNR(output.cpu().data.numpy(), label.cpu().data.numpy())
-                        res = poor_label - output
-
-                        loss = SepConvNet_cost(output, label)
-                        sumloss = sumloss + loss.data.item()
-
+                        output_f, output_b, stat = SepConvNet(imgL, imgR)
                     else:
-                        output, output_a, output_b, stat = SepConvNet(imgL, imgR, res, stat)
-                        psnr = psnr + calcPSNR.calcPSNR(output.cpu().data.numpy(), label.cpu().data.numpy())
-                        res = poor_label - output
+                        output_f, output_b, stat = SepConvNet(imgL, imgR, res_f, res_b, stat)
 
-                        loss = SepConvNet_cost(output, label)
-                        sumloss = sumloss + loss.data.item()
+                    psnr = psnr + calcPSNR.calcPSNR(output_f.cpu().data.numpy(), label.cpu().data.numpy())
+                    res_f = poor_label - output_f
+                    res_b = label_L - output_b
+
+                    loss = SepConvNet_cost(output_f, label)
+                    sumloss = sumloss + loss.data.item()
                 
                 evalcnt = evalcnt + 5
 
@@ -658,7 +588,7 @@ def main(lr, batch_size, epoch, gpu, train_set, valid_set):
         sumloss / evalcnt, psnr / evalcnt))
         SepConvNet_schedule.step(psnr / evalcnt)
         torch.save(SepConvNet.state_dict(),
-                os.path.join('.', 'multiscale_test_LSTM_iter' + str(epoch + 1)
+                os.path.join('.', 'minidual_LSTM_iter' + str(epoch + 1)
                                 + '-ltype_fSATD_fs'
                                 + '-lr_' + str(LEARNING_RATE)
                                 + '-trainloss_' + str(round(trainloss, 4))
@@ -676,9 +606,9 @@ if __name__ == "__main__":
                         default=200, help="Number of epochs")
     parser.add_argument("--gpu", type=int, dest="gpu", required=True,
                         help="GPU device id")
-    parser.add_argument("--train_set", type=str, dest="train_set", default="/mnt/ssd/iku/vimeo_7_train_split_ssd", 
+    parser.add_argument("--train_set", type=str, dest="train_set", default="/data1/ikusyou/vimeo_7_train", 
                         help="Path of the training set")
-    parser.add_argument("--valid_set", type=str, dest="valid_set", default="/mnt/hdd/iku/vimeo_7_valid", 
+    parser.add_argument("--valid_set", type=str, dest="valid_set", default="/data1/ikusyou/vimeo_7_valid", 
                         help="Path of the validation set")
 
     args = parser.parse_args()
